@@ -35,7 +35,7 @@ tornado.options.define("more", default=False,
                        help="Debug mode with more verbosity")
 tornado.options.define("host", default='localhost', help="Server host")
 tornado.options.define("port", default=57575, type=int, help="Server port")
-tornado.options.define("shell", default="lxcserial.py",
+tornado.options.define("shell", default=os.getcwd()+"/lxcserial.py",
                        help="Shell to execute at login")
 tornado.options.define("unsecure", default=True,
                        help="Don't use ssl not recommended")
