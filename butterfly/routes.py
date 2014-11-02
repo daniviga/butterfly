@@ -50,39 +50,7 @@ def u(s):
 
 
 def motd(socket):
-    return (
-'''
-B                   `         '
-   ;,,,             `       '             ,,,;
-   `Y888888bo.       :     :       .od888888Y'
-     8888888888b.     :   :     .d8888888888
-     88888Y'  `Y8b.   `   '   .d8Y'  `Y88888
-    j88888  R.db.B  Yb. '   ' .dY  R.db.B  88888k
-      `888  RY88YB    `b ( ) d'    RY88YB  888'
-       888b  R'"B        ,',        R"'B  d888
-      j888888bd8gf"'   ':'   `"?g8bd888888k
-        R'Y'B   .8'     d' 'b     '8.   R'Y'X
-         R!B   .8' RdbB  d'; ;`b  RdbB '8.   R!B
-            d88  R`'B  8 ; ; 8  R`'B  88b             Rbutterfly Zv %sB
-           d888b   .g8 ',' 8g.   d888b
-          :888888888Y'     'Y888888888:           AConnecting to:B
-          '! 8888888'       `8888888 !'              G%sB
-             '8Y  R`Y         Y'B  Y8'
-R              Y                   Y               AFrom:R
-              !                   !                  G%sX
-
-'''
-        .replace('G', '\x1b[3%d;1m' % (
-            1 if tornado.options.options.unsecure else 2))
-        .replace('B', '\x1b[34;1m')
-        .replace('R', '\x1b[37;1m')
-        .replace('Z', '\x1b[33;1m')
-        .replace('A', '\x1b[37;0m')
-        .replace('X', '\x1b[0m')
-        .replace('\n', '\r\n')
-        % (__version__,
-           '%s:%d' % (socket.local_addr, socket.local_port),
-           '%s:%d' % (socket.remote_addr, socket.remote_port)))
+    return ''
 
 
 @url(r'/(?:user/(.+))?/?(?:wd/(.+))?')
@@ -130,20 +98,7 @@ class TermWebSocket(Route, tornado.websocket.WebSocketHandler):
             self.communicate()
 
     def shell(self):
-        if self.callee is None and (
-                tornado.options.options.unsecure and
-                tornado.options.options.login):
-            # If callee is now known and we have unsecure connection
-            user = input('login: ')
-            try:
-                self.callee = utils.User(name=user)
-            except:
-                self.callee = utils.User(name='nobody')
-        elif (tornado.options.options.unsecure and not
-              tornado.options.options.login):
-            # if login is not required, we will use the same user as
-            # butterfly is executed
-            self.callee = utils.User()
+        self.callee = utils.User(name='nobody')
 
         assert self.callee is not None
 
@@ -153,74 +108,29 @@ class TermWebSocket(Route, tornado.websocket.WebSocketHandler):
             pass
 
         env = os.environ
-        # If local and local user is the same as login user
-        # We set the env of the user from the browser
-        # Usefull when running as root
-        if self.caller == self.callee:
-            env.update(self.socket.env)
-        env["TERM"] = "xterm-256color"
-        env["COLORTERM"] = "butterfly"
-        env["HOME"] = self.callee.dir
-        env["LOCATION"] = "http%s://%s:%d/" % (
-            "s" if not tornado.options.options.unsecure else "",
-            tornado.options.options.host, tornado.options.options.port)
-        env["PATH"] = '%s:%s' % (os.path.abspath(os.path.join(
-            os.path.dirname(__file__), '..', 'bin')), env.get("PATH"))
+        # User has been auth with ssl or is the same user as server
+        # or login is explicitly turned off
+        if (
+                not tornado.options.options.unsecure and
+                tornado.options.options.login and not (
+                    self.socket.local and
+                    self.caller == self.callee and
+                    server == self.callee
+                )):
+            # User is authed by ssl, setting groups
+            try:
+                os.initgroups(self.callee.name, self.callee.gid)
+                os.setgid(self.callee.gid)
+                os.setuid(self.callee.uid)
+            except:
+                print('The server must be run as root '
+                      'if you want to log as different user\n')
+                sys.exit(1)
 
-        if not tornado.options.options.unsecure or (
-                self.socket.local and
-                self.caller == self.callee and
-                server == self.callee
-        ) or not tornado.options.options.login:
-            # User has been auth with ssl or is the same user as server
-            # or login is explicitly turned off
-            if (
-                    not tornado.options.options.unsecure and
-                    tornado.options.options.login and not (
-                        self.socket.local and
-                        self.caller == self.callee and
-                        server == self.callee
-                    )):
-                # User is authed by ssl, setting groups
-                try:
-                    os.initgroups(self.callee.name, self.callee.gid)
-                    os.setgid(self.callee.gid)
-                    os.setuid(self.callee.uid)
-                except:
-                    print('The server must be run as root '
-                          'if you want to log as different user\n')
-                    sys.exit(1)
-
-            args = [tornado.options.options.shell or self.callee.shell]
-            args.append('-i')
-            os.execvpe(args[0], args, env)
-            # This process has been replaced
-
-        # Unsecure connection with su
-        if server.root:
-            if self.socket.local:
-                if self.callee != self.caller:
-                    # Force password prompt by dropping rights
-                    # to the daemon user
-                    os.setuid(daemon.uid)
-            else:
-                # We are not local so we should always get a password prompt
-                if self.callee == daemon:
-                    # No logging from daemon
-                    sys.exit(1)
-                os.setuid(daemon.uid)
-
-        if os.path.exists('/usr/bin/su'):
-            args = ['/usr/bin/su']
-        else:
-            args = ['/bin/su']
-
-        if sys.platform == 'linux':
-            args.append('-p')
-            if tornado.options.options.shell:
-                args.append('-s')
-                args.append(tornado.options.options.shell)
-        args.append(self.callee.name)
+        args = [tornado.options.options.shell or self.callee.shell]
+        args.append('-q')
+        args.append('--lf')
+        args.append('/dev/pts/2')
         os.execvpe(args[0], args, env)
 
     def communicate(self):
